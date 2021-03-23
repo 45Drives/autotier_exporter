@@ -12,29 +12,33 @@ def get_status():
 				stdout=subprocess.PIPE, universal_newlines=True)
 		except OSError:
 			print("Error executing autotier. Is it installed?")
-			sys.exit(1)
+			return (127, {})
 		if child.wait() != 0:
 			print("Error: autotier exited with code {}".format(child.returncode))
-			sys.exit(child.returncode)
-		return json.loads(child.stdout.read())
+			return (child.returncode, {})
+		return (child.returncode, json.loads(child.stdout.read()))
 
 class AutotierCollector(object):
 	def __init__(self):
 		pass
 	
 	def collect(self):
-		status = get_status()
-		usage_gauge = GaugeMetricFamily("tier_usage_bytes", 'Usage of tier in bytes', labels=['name', 'number'])
-		capacity_gauge = GaugeMetricFamily("tier_capacity_bytes", 'Capacity of tier in bytes', labels=['name', 'number'])
-		quota_gauge = GaugeMetricFamily("tier_quota_bytes", 'Quota of tier in bytes', labels=['name', 'number'])
-		for i in range(len(status["tiers"])):
-			tier = status["tiers"][i]
-			usage_gauge.add_metric([tier["name"], str(i)], tier["usage"])
-			capacity_gauge.add_metric([tier["name"], str(i)], tier["capacity"])
-			quota_gauge.add_metric([tier["name"], str(i)], tier["quota"])
-		yield usage_gauge
-		yield capacity_gauge
-		yield quota_gauge
+		exit_code, status = get_status()
+		autotier_status = GaugeMetricFamily("autotier_status", "State of filesystem", labels=['field'])
+		if exit_code == 0:
+			autotier_status.add_metric(['mounted'], 1)
+			autotier_status.add_metric(['exit-code'], exit_code)
+			tier_status = GaugeMetricFamily("tier_status", 'Usage, Capacity, and Quota of tiers', labels=['name', 'number', 'field'])
+			for i in range(len(status["tiers"])):
+				tier = status["tiers"][i]
+				tier_status.add_metric([tier["name"], str(i), 'usage'], tier["usage"])
+				tier_status.add_metric([tier["name"], str(i), 'capacity'], tier["capacity"])
+				tier_status.add_metric([tier["name"], str(i), 'quota'], tier["quota"])
+			yield tier_status
+		else:
+			autotier_status.add_metric(['mounted'], 0)
+			autotier_status.add_metric(['exit_code'], exit_code)
+		yield autotier_status
 
 def parse_args():
 	parser = argparse.ArgumentParser(description = 'Prometheus metrics exporter for autotier.')
